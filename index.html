@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Turtle Kong 🐢</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100vh; font-family: 'Courier New', monospace;
+    overflow: hidden;
+  }
+  #header {
+    color: #0f0; font-size: 18px; margin-bottom: 8px;
+    text-align: center; text-shadow: 0 0 8px #0f0;
+  }
+  #header span { color: #ff0; }
+  #header .lvl { color: #f80; }
+  canvas {
+    border: 3px solid #0f0;
+    box-shadow: 0 0 20px rgba(0,255,0,0.3);
+    image-rendering: pixelated;
+    cursor: pointer;
+  }
+  #instructions {
+    color: #888; font-size: 13px; margin-top: 10px; text-align: center;
+  }
+  #instructions kbd {
+    background: #333; color: #0f0; padding: 2px 6px;
+    border: 1px solid #555; border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+<div id="header">🐢 TURTLE KONG 🐢 &nbsp; Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Level: <span id="level" class="lvl">1</span></div>
+<canvas id="game" width="640" height="480"></canvas>
+<div id="instructions">
+  <kbd>←</kbd> <kbd>→</kbd> Move &nbsp; <kbd>Space</kbd> Jump &nbsp; <kbd>↑</kbd><kbd>↓</kbd> Climb &nbsp; <kbd>R</kbd> Restart &nbsp; <kbd>M</kbd> Mute
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = 640, H = 480;
+
+// ========================
+// SOUND ENGINE (Web Audio)
+// ========================
+let audioCtx = null;
+let muted = false;
+let musicPlaying = false;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playTone(freq, duration, type = 'square', volume = 0.15, slide = 0) {
+  if (!audioCtx || muted) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if (slide) osc.frequency.linearRampToValueAtTime(freq + slide, audioCtx.currentTime + duration);
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function playNoise(duration, volume = 0.1) {
+  if (!audioCtx || muted) return;
+  const bufferSize = audioCtx.sampleRate * duration;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+  const src = audioCtx.createBufferSource();
+  const gain = audioCtx.createGain();
+  src.buffer = buffer;
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  src.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start();
+}
+
+const SFX = {
+  jump() { playTone(250, 0.15, 'square', 0.12, 300); },
+  stomp() { playTone(150, 0.1, 'square', 0.15); playNoise(0.08, 0.15); setTimeout(() => playTone(300, 0.1, 'square', 0.1), 50); },
+  die() { playTone(400, 0.4, 'sawtooth', 0.15, -350); setTimeout(() => playTone(100, 0.3, 'square', 0.1), 200); },
+  win() {
+    [0, 100, 200, 300, 450].forEach((t, i) => {
+      setTimeout(() => playTone([523, 659, 784, 1047, 1319][i], 0.15, 'square', 0.12), t);
+    });
+  },
+  gameOver() {
+    [0, 200, 400, 600].forEach((t, i) => {
+      setTimeout(() => playTone([400, 350, 300, 200][i], 0.3, 'sawtooth', 0.12), t);
+    });
+  },
+  carrotThrow() { playNoise(0.06, 0.06); playTone(800, 0.08, 'sine', 0.05, -400); },
+  climb() { playTone(600 + Math.random() * 200, 0.05, 'square', 0.04); },
+  levelUp() {
+    [0, 120, 240, 360, 480, 600, 750].forEach((t, i) => {
+      setTimeout(() => playTone([523, 587, 659, 784, 880, 988, 1047][i], 0.18, 'square', 0.1), t);
+    });
+  },
+  pickup() { playTone(880, 0.08, 'sine', 0.1); setTimeout(() => playTone(1320, 0.12, 'sine', 0.1), 80); },
+};
+
+// Background music
+let musicInterval = null;
+function startMusic() {
+  if (musicPlaying) return;
+  musicPlaying = true;
+  let beat = 0;
+  const bassLine = [131, 131, 165, 165, 175, 175, 147, 147];
+  const melodyLine = [523, 0, 659, 0, 784, 659, 523, 0];
+  musicInterval = setInterval(() => {
+    if (muted || !audioCtx) return;
+    const b = beat % 8;
+    playTone(bassLine[b], 0.18, 'triangle', 0.06);
+    if (melodyLine[b] > 0) playTone(melodyLine[b], 0.12, 'square', 0.03);
+    if (b % 2 === 0) playNoise(0.04, 0.04);
+    beat++;
+  }, 200);
+}
+
+function stopMusic() {
+  if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+  musicPlaying = false;
+}
+
+// ========================
+// LEVEL DEFINITIONS
+// ========================
+const LEVELS = [
+  { // Level 1: "The Garden"
+    name: "The Garden",
+    bg: '#1a1a2e', girder: '#e44', girderDark: '#a22',
+    throwInterval: 100, carrotSpeed: 1.8, carrotSpeedVar: 1.2,
+    platforms: [
+      { x: 0, y: 460, w: 640, slant: 0 },
+      { x: 40, y: 385, w: 560, slant: 0.03 },
+      { x: 40, y: 310, w: 560, slant: -0.03 },
+      { x: 40, y: 235, w: 560, slant: 0.03 },
+      { x: 40, y: 160, w: 560, slant: -0.03 },
+      { x: 200, y: 85, w: 240, slant: 0 },
+    ],
+    ladders: [
+      { x: 540, top: 385, bot: 460 },
+      { x: 100, top: 310, bot: 385 },
+      { x: 500, top: 235, bot: 310 },
+      { x: 120, top: 160, bot: 235 },
+      { x: 350, top: 85,  bot: 160 },
+    ],
+    harePos: { x: 220, y: 55 },
+    lettucePos: { x: 390, y: 58 },
+    turtleStart: { x: 50, y: 440 },
+  },
+  { // Level 2: "The Greenhouse"
+    name: "The Greenhouse",
+    bg: '#1e2a1a', girder: '#e84', girderDark: '#a52',
+    throwInterval: 80, carrotSpeed: 2.0, carrotSpeedVar: 1.5,
+    platforms: [
+      { x: 0, y: 460, w: 640, slant: 0 },
+      { x: 20, y: 390, w: 250, slant: 0.02 },
+      { x: 350, y: 390, w: 270, slant: -0.02 },
+      { x: 60, y: 320, w: 520, slant: -0.025 },
+      { x: 30, y: 250, w: 230, slant: 0.03 },
+      { x: 380, y: 250, w: 230, slant: -0.02 },
+      { x: 80, y: 175, w: 480, slant: 0.02 },
+      { x: 180, y: 90, w: 280, slant: 0 },
+    ],
+    ladders: [
+      { x: 230, top: 390, bot: 460 },
+      { x: 560, top: 320, bot: 390 },
+      { x: 120, top: 250, bot: 320 },
+      { x: 500, top: 175, bot: 250 },
+      { x: 200, top: 175, bot: 250 },
+      { x: 350, top: 90,  bot: 175 },
+    ],
+    harePos: { x: 200, y: 60 },
+    lettucePos: { x: 400, y: 63 },
+    turtleStart: { x: 50, y: 440 },
+  },
+  { // Level 3: "The Burrow"
+    name: "The Burrow",
+    bg: '#2a1e1a', girder: '#c84', girderDark: '#854',
+    throwInterval: 65, carrotSpeed: 2.2, carrotSpeedVar: 1.8,
+    platforms: [
+      { x: 0, y: 460, w: 640, slant: 0 },
+      { x: 30, y: 395, w: 580, slant: -0.025 },
+      { x: 30, y: 330, w: 580, slant: 0.025 },
+      { x: 30, y: 265, w: 580, slant: -0.025 },
+      { x: 30, y: 200, w: 580, slant: 0.025 },
+      { x: 30, y: 135, w: 580, slant: -0.02 },
+      { x: 220, y: 70, w: 200, slant: 0 },
+    ],
+    ladders: [
+      { x: 560, top: 395, bot: 460 },
+      { x: 300, top: 395, bot: 460 },
+      { x: 80,  top: 330, bot: 395 },
+      { x: 450, top: 330, bot: 395 },
+      { x: 550, top: 265, bot: 330 },
+      { x: 150, top: 265, bot: 330 },
+      { x: 100, top: 200, bot: 265 },
+      { x: 480, top: 200, bot: 265 },
+      { x: 350, top: 135, bot: 200 },
+      { x: 300, top: 70,  bot: 135 },
+    ],
+    harePos: { x: 230, y: 40 },
+    lettucePos: { x: 370, y: 43 },
+    turtleStart: { x: 50, y: 440 },
+  },
+  { // Level 4: "The Meadow"
+    name: "The Meadow",
+    bg: '#1a1e2e', girder: '#48e', girderDark: '#258',
+    throwInterval: 55, carrotSpeed: 2.5, carrotSpeedVar: 2.0,
+    platforms: [
+      { x: 0, y: 460, w: 640, slant: 0 },
+      { x: 40, y: 395, w: 180, slant: 0.02 },
+      { x: 300, y: 385, w: 140, slant: 0 },
+      { x: 500, y: 395, w: 120, slant: -0.03 },
+      { x: 80, y: 315, w: 200, slant: -0.02 },
+      { x: 380, y: 320, w: 220, slant: 0.02 },
+      { x: 40, y: 245, w: 160, slant: 0.03 },
+      { x: 270, y: 240, w: 140, slant: 0 },
+      { x: 470, y: 245, w: 150, slant: -0.02 },
+      { x: 120, y: 170, w: 400, slant: -0.02 },
+      { x: 220, y: 90, w: 200, slant: 0 },
+    ],
+    ladders: [
+      { x: 180, top: 395, bot: 460 },
+      { x: 420, top: 315, bot: 385 },
+      { x: 550, top: 245, bot: 395 },
+      { x: 120, top: 315, bot: 395 },
+      { x: 160, top: 245, bot: 315 },
+      { x: 460, top: 170, bot: 245 },
+      { x: 300, top: 90,  bot: 170 },
+    ],
+    harePos: { x: 235, y: 60 },
+    lettucePos: { x: 370, y: 63 },
+    turtleStart: { x: 50, y: 440 },
+  },
+  { // Level 5: "The Warren" - FINAL
+    name: "The Warren - FINAL",
+    bg: '#2a1a1a', girder: '#f44', girderDark: '#a22',
+    throwInterval: 40, carrotSpeed: 2.8, carrotSpeedVar: 2.2,
+    platforms: [
+      { x: 0, y: 460, w: 640, slant: 0 },
+      { x: 20, y: 400, w: 600, slant: 0.035 },
+      { x: 20, y: 340, w: 600, slant: -0.035 },
+      { x: 20, y: 275, w: 280, slant: 0.03 },
+      { x: 340, y: 275, w: 280, slant: -0.03 },
+      { x: 20, y: 210, w: 600, slant: 0.03 },
+      { x: 100, y: 145, w: 440, slant: -0.025 },
+      { x: 200, y: 75, w: 240, slant: 0 },
+    ],
+    ladders: [
+      { x: 570, top: 400, bot: 460 },
+      { x: 70,  top: 340, bot: 400 },
+      { x: 260, top: 275, bot: 340 },
+      { x: 560, top: 275, bot: 340 },
+      { x: 100, top: 210, bot: 275 },
+      { x: 400, top: 210, bot: 275 },
+      { x: 500, top: 145, bot: 210 },
+      { x: 150, top: 145, bot: 210 },
+      { x: 320, top: 75,  bot: 145 },
+    ],
+    harePos: { x: 215, y: 45 },
+    lettucePos: { x: 385, y: 48 },
+    turtleStart: { x: 50, y: 440 },
+  },
+];
+
+// ========================
+// GAME STATE
+// ========================
+let score = 0, lives = 3, gameOver = false, won = false;
+let frameCount = 0;
+let currentLevel = 0;
+let levelTransition = 0;
+let allLevelsComplete = false;
+
+let platforms = [];
+let ladders = [];
+let hare = {};
+let lettuce = {};
+let turtle = {};
+let carrots = [];
+let particles = [];
+let bonuses = [];
+
+// Keys
+const keys = {};
+let audioStarted = false;
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  if (e.code === 'KeyM') { muted = !muted; if (muted) stopMusic(); else startMusic(); }
+  if (!audioStarted) { initAudio(); audioStarted = true; startMusic(); }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+canvas.addEventListener('click', () => { if (!audioStarted) { initAudio(); audioStarted = true; startMusic(); } });
+
+function getPlatformY(plat, xPos) {
+  return plat.y + (xPos - plat.x) * plat.slant;
+}
+
+function loadLevel(idx) {
+  const L = LEVELS[idx];
+  platforms = L.platforms.map(p => ({...p}));
+  ladders = L.ladders.map(l => ({...l}));
+  hare = { x: L.harePos.x, y: L.harePos.y, frame: 0, throwTimer: 0 };
+  lettuce = { x: L.lettucePos.x, y: L.lettucePos.y, w: 20, h: 20 };
+  turtle = { x: L.turtleStart.x, y: L.turtleStart.y, w: 24, h: 20, vx: 0, vy: 0, onGround: false, climbing: false, facing: 1, frame: 0, climbSfxTimer: 0 };
+  carrots = [];
+  particles = [];
+  bonuses = [];
+  won = false;
+  for (let i = 1; i < platforms.length - 1; i++) {
+    if (Math.random() < 0.45) {
+      const p = platforms[i];
+      const bx = p.x + 40 + Math.random() * (p.w - 80);
+      bonuses.push({ x: bx, y: getPlatformY(p, bx) - 15, collected: false, type: Math.random() < 0.5 ? 'shell' : 'star' });
+    }
+  }
+}
+
+function resetLife() {
+  const L = LEVELS[currentLevel];
+  turtle = { x: L.turtleStart.x, y: L.turtleStart.y, w: 24, h: 20, vx: 0, vy: 0, onGround: false, climbing: false, facing: 1, frame: 0, climbSfxTimer: 0 };
+  carrots = [];
+  particles = [];
+  hare.throwTimer = 0;
+}
+
+function fullReset() {
+  score = 0; lives = 3; gameOver = false; won = false;
+  currentLevel = 0; levelTransition = 0; allLevelsComplete = false;
+  loadLevel(0);
+  startMusic();
+}
+
+function spawnCarrot() {
+  const L = LEVELS[currentLevel];
+  const dir = Math.random() > 0.5 ? 1 : -1;
+  carrots.push({
+    x: hare.x + 15, y: hare.y + 25, w: 16, h: 12,
+    vx: dir * (L.carrotSpeed + Math.random() * L.carrotSpeedVar), vy: 0, rot: 0
+  });
+  hare.frame = 10;
+  SFX.carrotThrow();
+}
+
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y, vx: (Math.random()-0.5)*4, vy: -Math.random()*3-1,
+      life: 30 + Math.random()*20, color, size: 2+Math.random()*3
+    });
+  }
+}
+
+function isOnLadder(entity) {
+  for (const l of ladders) {
+    if (entity.x + entity.w/2 > l.x - 8 && entity.x + entity.w/2 < l.x + 18 &&
+        entity.y + entity.h > l.top && entity.y + entity.h <= l.bot + 5) {
+      return l;
+    }
+  }
+  return null;
+}
+
+function advanceLevel() {
+  if (currentLevel < LEVELS.length - 1) {
+    currentLevel++;
+    levelTransition = 180;
+    SFX.levelUp();
+  } else {
+    allLevelsComplete = true;
+    SFX.win();
+    stopMusic();
+  }
+}
+
+// ========================
+// UPDATE
+// ========================
+function update() {
+  if (gameOver || allLevelsComplete) {
+    if (keys['KeyR']) fullReset();
+    return;
+  }
+
+  if (levelTransition > 0) {
+    levelTransition--;
+    if (levelTransition === 0) loadLevel(currentLevel);
+    return;
+  }
+
+  if (won) {
+    if (keys['KeyR']) fullReset();
+    return;
+  }
+
+  frameCount++;
+  const L = LEVELS[currentLevel];
+
+  // Movement
+  const speed = 2.5;
+  turtle.vx = 0;
+  if (!turtle.climbing) {
+    if (keys['ArrowLeft'] || keys['KeyA'])  { turtle.vx = -speed; turtle.facing = -1; }
+    if (keys['ArrowRight'] || keys['KeyD']) { turtle.vx = speed; turtle.facing = 1; }
+    if (keys['Space'] && turtle.onGround) {
+      turtle.vy = -7.2;
+      turtle.onGround = false;
+      SFX.jump();
+    }
+    turtle.vy += 0.35;
+  }
+
+  // Climbing
+  const ladder = isOnLadder(turtle);
+  if (ladder && (keys['ArrowUp'] || keys['KeyW'])) {
+    turtle.climbing = true;
+    turtle.vy = -2;
+    turtle.vx = 0;
+    turtle.x = ladder.x - turtle.w/2 + 5;
+    turtle.climbSfxTimer++;
+    if (turtle.climbSfxTimer % 8 === 0) SFX.climb();
+    if (turtle.y + turtle.h <= ladder.top + 5) {
+      turtle.climbing = false;
+      turtle.y = ladder.top - turtle.h;
+      turtle.vy = 0;
+      turtle.onGround = true;
+    }
+  } else if (turtle.climbing && ladder && keys['ArrowDown']) {
+    turtle.vy = 2;
+    turtle.climbSfxTimer++;
+    if (turtle.climbSfxTimer % 8 === 0) SFX.climb();
+  } else if (turtle.climbing && ladder) {
+    turtle.vy = 0;
+  } else {
+    turtle.climbSfxTimer = 0;
+  }
+  if (turtle.climbing && !ladder) turtle.climbing = false;
+
+  turtle.x += turtle.vx;
+  turtle.y += turtle.vy;
+  turtle.frame += Math.abs(turtle.vx) > 0 ? 0.15 : 0;
+
+  // Platform collision
+  turtle.onGround = false;
+  if (!turtle.climbing) {
+    for (const p of platforms) {
+      const py = getPlatformY(p, turtle.x + turtle.w/2);
+      if (turtle.x + turtle.w > p.x && turtle.x < p.x + p.w &&
+          turtle.y + turtle.h >= py - 2 && turtle.y + turtle.h <= py + 12 && turtle.vy >= 0) {
+        turtle.y = py - turtle.h;
+        turtle.vy = 0;
+        turtle.onGround = true;
+      }
+    }
+  }
+
+  // Boundaries
+  if (turtle.x < 0) turtle.x = 0;
+  if (turtle.x + turtle.w > W) turtle.x = W - turtle.w;
+  if (turtle.y > H) { die(); return; }
+
+  // Collect bonuses
+  for (const b of bonuses) {
+    if (!b.collected && Math.abs(turtle.x - b.x) < 20 && Math.abs(turtle.y - b.y) < 20) {
+      b.collected = true;
+      score += b.type === 'star' ? 250 : 150;
+      spawnParticles(b.x, b.y, b.type === 'star' ? '#ff0' : '#0ff', 8);
+      SFX.pickup();
+    }
+  }
+
+  // Hare throws
+  hare.throwTimer++;
+  if (hare.throwTimer > L.throwInterval + Math.random() * 40) {
+    spawnCarrot();
+    hare.throwTimer = 0;
+  }
+  if (hare.frame > 0) hare.frame--;
+
+  // Update carrots
+  for (let i = carrots.length - 1; i >= 0; i--) {
+    const c = carrots[i];
+    c.vy += 0.3;
+    c.x += c.vx;
+    c.y += c.vy;
+    c.rot += c.vx * 0.05;
+
+    for (const p of platforms) {
+      const py = getPlatformY(p, c.x + c.w/2);
+      if (c.x + c.w > p.x && c.x < p.x + p.w &&
+          c.y + c.h >= py - 2 && c.y + c.h <= py + 8 && c.vy >= 0) {
+        c.y = py - c.h;
+        c.vy = -2.5;
+        if (c.vx === 0) c.vx = p.slant > 0 ? 2 : -2;
+      }
+    }
+
+    if (c.y > H + 20 || c.x < -30 || c.x > W + 30) {
+      carrots.splice(i, 1);
+      continue;
+    }
+
+    if (Math.abs((c.x+c.w/2)-(turtle.x+turtle.w/2)) < 18 &&
+        Math.abs((c.y+c.h/2)-(turtle.y+turtle.h/2)) < 16) {
+      if (turtle.vy > 0 && turtle.y + turtle.h < c.y + c.h/2) {
+        score += 100;
+        spawnParticles(c.x, c.y, '#f80', 10);
+        carrots.splice(i, 1);
+        turtle.vy = -5;
+        SFX.stomp();
+      } else {
+        die();
+        return;
+      }
+    }
+  }
+
+  // Win condition
+  if (Math.abs(turtle.x - lettuce.x) < 25 && Math.abs(turtle.y - lettuce.y) < 25) {
+    won = true;
+    score += 1000 + currentLevel * 500;
+    spawnParticles(lettuce.x, lettuce.y, '#0f0', 30);
+    SFX.win();
+    setTimeout(() => { if (won && !gameOver) { won = false; advanceLevel(); } }, 2000);
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function die() {
+  lives--;
+  spawnParticles(turtle.x, turtle.y, '#f00', 20);
+  if (lives <= 0) {
+    gameOver = true;
+    SFX.gameOver();
+    stopMusic();
+  } else {
+    SFX.die();
+    resetLife();
+  }
+}
+
+// ========================
+// DRAWING
+// ========================
+function drawTurtle(x, y, facing, frame) {
+  ctx.save();
+  ctx.translate(x + 12, y + 10);
+  ctx.scale(facing, 1);
+  ctx.fillStyle = '#2d8a4e';
+  ctx.beginPath(); ctx.ellipse(0, 2, 12, 10, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#1a6b38';
+  ctx.fillRect(-4, -4, 3, 6); ctx.fillRect(2, -2, 3, 6);
+  const bob = Math.sin(frame * 0.8) * 1.5;
+  ctx.fillStyle = '#4ecb71';
+  ctx.beginPath(); ctx.ellipse(12+bob, -2, 6, 5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(14+bob, -4, 2, 2);
+  const la = Math.sin(frame * 1.5) * 3;
+  ctx.fillStyle = '#4ecb71';
+  ctx.fillRect(-8+la, 8, 5, 5); ctx.fillRect(4-la, 8, 5, 5);
+  ctx.fillRect(-6-la, -6, 4, 5); ctx.fillRect(6+la, -6, 4, 5);
+  ctx.restore();
+}
+
+function drawHare(x, y, frame) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#ccc';
+  ctx.beginPath(); ctx.ellipse(15, 15, 14, 16, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ddd';
+  ctx.beginPath(); ctx.ellipse(15, -5, 10, 10, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ccc';
+  ctx.fillRect(8, -28, 5, 20); ctx.fillRect(18, -28, 5, 20);
+  ctx.fillStyle = '#faa';
+  ctx.fillRect(9, -25, 3, 15); ctx.fillRect(19, -25, 3, 15);
+  ctx.fillStyle = currentLevel >= 3 ? '#f00' : '#f60';
+  ctx.fillRect(10, -8, 3, 3); ctx.fillRect(18, -8, 3, 3);
+  if (currentLevel >= 4) {
+    ctx.fillStyle = '#333';
+    ctx.fillRect(9, -12, 5, 2); ctx.fillRect(17, -12, 5, 2);
+  }
+  ctx.fillStyle = '#333';
+  ctx.fillRect(12, 0, 8, 2);
+  if (frame > 0) { ctx.fillStyle = '#ccc'; ctx.fillRect(30, -5-frame, 8, 6); }
+  ctx.restore();
+}
+
+function drawCarrot(x, y, w, h, rot) {
+  ctx.save();
+  ctx.translate(x+w/2, y+h/2);
+  ctx.rotate(rot);
+  ctx.fillStyle = '#f80';
+  ctx.beginPath(); ctx.moveTo(-8,-3); ctx.lineTo(8,0); ctx.lineTo(-8,3); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#0a0';
+  ctx.fillRect(-9, -5, 4, 10);
+  ctx.restore();
+}
+
+function drawLettuce(x, y) {
+  const pulse = Math.sin(frameCount * 0.08) * 3;
+  ctx.save();
+  ctx.translate(x+10, y+10);
+  ctx.fillStyle = `rgba(100,255,100,${0.2+Math.sin(frameCount*0.1)*0.1})`;
+  ctx.beginPath(); ctx.arc(0, 0, 18+pulse, 0, Math.PI*2); ctx.fill();
+  for (let i = 0; i < 6; i++) {
+    const a = (i/6)*Math.PI*2 + frameCount*0.02;
+    ctx.fillStyle = i%2===0 ? '#4f4' : '#2d2';
+    ctx.beginPath(); ctx.ellipse(Math.cos(a)*5, Math.sin(a)*5, 8, 5, a, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle = '#afa';
+  ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawBonus(b) {
+  if (b.collected) return;
+  ctx.save();
+  ctx.translate(b.x, b.y + Math.sin(frameCount*0.06 + b.x)*3);
+  if (b.type === 'star') {
+    ctx.fillStyle = '#ff0';
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const a1 = (i*4*Math.PI/5) - Math.PI/2;
+      const a2 = a1 + 2*Math.PI/5;
+      ctx[i===0?'moveTo':'lineTo'](Math.cos(a1)*8, Math.sin(a1)*8);
+      ctx.lineTo(Math.cos(a2)*3, Math.sin(a2)*3);
+    }
+    ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle = '#0ff';
+    ctx.beginPath(); ctx.ellipse(0, 0, 7, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#088';
+    ctx.fillRect(-2, -3, 2, 3); ctx.fillRect(1, -2, 2, 3);
+  }
+  ctx.restore();
+}
+
+function draw() {
+  const L = LEVELS[currentLevel];
+
+  ctx.fillStyle = L.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background stars
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  for (let i = 0; i < 30; i++) {
+    const sx = (i*137 + currentLevel*50) % W;
+    const sy = (i*97 + currentLevel*30) % H;
+    ctx.globalAlpha = (Math.sin(frameCount*0.02+i) > 0.5 ? 1 : 0.3) * 0.3;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // Level transition
+  if (levelTransition > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 36px Courier New';
+    ctx.fillText(`Level ${currentLevel + 1}`, W/2, H/2 - 40);
+    ctx.fillStyle = '#f80';
+    ctx.font = '24px Courier New';
+    ctx.fillText(LEVELS[currentLevel].name, W/2, H/2 + 5);
+    ctx.fillStyle = '#888';
+    ctx.font = '16px Courier New';
+    ctx.fillText('Get ready...', W/2, H/2 + 45);
+    const walkX = W/2 - 60 + ((180-levelTransition)/180)*120;
+    drawTurtle(walkX, H/2+65, 1, (180-levelTransition)*0.2);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(W/2-80, H/2+100, 160, 8);
+    ctx.fillStyle = '#0f0';
+    ctx.fillRect(W/2-80, H/2+100, 160*(1-levelTransition/180), 8);
+    document.getElementById('score').textContent = score;
+    document.getElementById('lives').textContent = lives;
+    document.getElementById('level').textContent = currentLevel + 1;
+    return;
+  }
+
+  // Platforms
+  for (const p of platforms) {
+    const py1 = getPlatformY(p, p.x);
+    const py2 = getPlatformY(p, p.x+p.w);
+    ctx.strokeStyle = L.girder; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(p.x, py1); ctx.lineTo(p.x+p.w, py2); ctx.stroke();
+    ctx.lineWidth = 1; ctx.strokeStyle = L.girderDark;
+    for (let gx = p.x; gx < p.x+p.w; gx += 20) {
+      const gy = getPlatformY(p, gx);
+      ctx.strokeRect(gx, gy, 20, 8);
+      ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx+20, gy+8); ctx.stroke();
+    }
+  }
+
+  // Ladders
+  ctx.strokeStyle = '#8cf'; ctx.lineWidth = 2;
+  for (const l of ladders) {
+    ctx.beginPath();
+    ctx.moveTo(l.x, l.top); ctx.lineTo(l.x, l.bot);
+    ctx.moveTo(l.x+12, l.top); ctx.lineTo(l.x+12, l.bot);
+    ctx.stroke();
+    for (let ry = l.top; ry < l.bot; ry += 12) {
+      ctx.beginPath(); ctx.moveTo(l.x, ry); ctx.lineTo(l.x+12, ry); ctx.stroke();
+    }
+  }
+
+  for (const b of bonuses) drawBonus(b);
+  drawLettuce(lettuce.x, lettuce.y);
+  drawHare(hare.x, hare.y, hare.frame);
+  for (const c of carrots) drawCarrot(c.x, c.y, c.w, c.h, c.rot);
+  drawTurtle(turtle.x, turtle.y, turtle.facing, turtle.frame);
+
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / 50;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // Level name
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '12px Courier New'; ctx.textAlign = 'right';
+  ctx.fillText(L.name, W-10, 15); ctx.textAlign = 'left';
+
+  // Mute indicator
+  if (muted) { ctx.fillStyle = '#f44'; ctx.font = '12px Courier New'; ctx.fillText('MUTED', 10, 15); }
+
+  // Game Over
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#f44'; ctx.font = 'bold 48px Courier New';
+    ctx.fillText('GAME OVER', W/2, H/2-30);
+    ctx.fillStyle = '#fff'; ctx.font = '20px Courier New';
+    ctx.fillText('The hare wins this time...', W/2, H/2+10);
+    ctx.fillStyle = '#ff0';
+    ctx.fillText(`Final Score: ${score}`, W/2, H/2+40);
+    ctx.fillStyle = '#888';
+    ctx.fillText('Press R to retry', W/2, H/2+70);
+  }
+
+  // Level clear
+  if (won && !allLevelsComplete) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#4f4'; ctx.font = 'bold 36px Courier New';
+    ctx.fillText('LEVEL CLEAR!', W/2, H/2-20);
+    ctx.fillStyle = '#ff0'; ctx.font = '20px Courier New';
+    ctx.fillText(`+${1000 + currentLevel*500} points!`, W/2, H/2+15);
+  }
+
+  // Victory!
+  if (allLevelsComplete) {
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, W, H);
+    const colors = ['#f44','#f80','#ff0','#4f4','#48f','#84f'];
+    ctx.font = 'bold 42px Courier New';
+    const title = 'TURTLE KONG CHAMPION!';
+    const cw = ctx.measureText('M').width;
+    const sx = W/2 - (title.length*cw)/2;
+    for (let i = 0; i < title.length; i++) {
+      ctx.fillStyle = colors[(i + Math.floor(frameCount/8)) % colors.length];
+      ctx.textAlign = 'left';
+      ctx.fillText(title[i], sx + i*cw, H/2-50);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff'; ctx.font = '22px Courier New';
+    ctx.fillText('Slow and steady wins the race!', W/2, H/2);
+    ctx.fillStyle = '#ff0'; ctx.font = 'bold 28px Courier New';
+    ctx.fillText(`Final Score: ${score}`, W/2, H/2+40);
+    ctx.fillStyle = '#888'; ctx.font = '16px Courier New';
+    ctx.fillText('The hare has been defeated!', W/2, H/2+75);
+    ctx.fillText('Press R to play again', W/2, H/2+100);
+    if (frameCount % 5 === 0) spawnParticles(Math.random()*W, Math.random()*H, colors[Math.floor(Math.random()*6)], 2);
+  }
+
+  document.getElementById('score').textContent = score;
+  document.getElementById('lives').textContent = lives;
+  document.getElementById('level').textContent = currentLevel + 1;
+}
+
+// ========================
+// GAME LOOP
+// ========================
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+loadLevel(0);
+gameLoop();
+</script>
+</body>
+</html>

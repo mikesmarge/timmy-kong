@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1a2e">
-<title>Turtle Kong</title>
+<title>Timmy Kong</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -145,7 +145,7 @@
 </style>
 </head>
 <body>
-<div id="header">TURTLE KONG &nbsp; Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Level: <span id="level" class="lvl">1</span></div>
+<div id="header">TIMMY KONG &nbsp; Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Level: <span id="level" class="lvl">1</span></div>
 <canvas id="game" width="640" height="480"></canvas>
 <div id="instructions">
   <kbd>&larr;</kbd> <kbd>&rarr;</kbd> Move &nbsp; <kbd>Space</kbd> Jump &nbsp; <kbd>&uarr;</kbd><kbd>&darr;</kbd> Climb &nbsp; <kbd>R</kbd> Restart &nbsp; <kbd>M</kbd> Mute
@@ -168,7 +168,7 @@
 </div>
 
 <div id="tap-overlay">
-  <div class="title">TURTLE KONG</div>
+  <div class="title">TIMMY KONG</div>
   <div class="prompt">Tap to Start</div>
 </div>
 
@@ -1024,7 +1024,7 @@ function draw() {
     ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, W, H);
     const colors = ['#f44','#f80','#ff0','#4f4','#48f','#84f'];
     ctx.font = 'bold 42px Courier New';
-    const title = 'TURTLE KONG CHAMPION!';
+    const title = 'TIMMY KONG CHAMPION!';
     const cw = ctx.measureText('M').width;
     const sx = W/2 - (title.length*cw)/2;
     for (let i = 0; i < title.length; i++) {

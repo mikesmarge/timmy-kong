@@ -2,15 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Turtle Kong 🐢</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1a2e">
+<title>Turtle Kong</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
+  html, body {
     background: #1a1a2e;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    height: 100vh; font-family: 'Courier New', monospace;
-    overflow: hidden;
+    font-family: 'Courier New', monospace;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
   #header {
     color: #0f0; font-size: 18px; margin-bottom: 8px;
@@ -23,6 +37,7 @@
     box-shadow: 0 0 20px rgba(0,255,0,0.3);
     image-rendering: pixelated;
     cursor: pointer;
+    display: block;
   }
   #instructions {
     color: #888; font-size: 13px; margin-top: 10px; text-align: center;
@@ -31,19 +46,164 @@
     background: #333; color: #0f0; padding: 2px 6px;
     border: 1px solid #555; border-radius: 3px;
   }
+
+  /* Touch controls */
+  #touch-controls {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0; right: 0;
+    padding: 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 100;
+    pointer-events: none;
+  }
+  #touch-controls.active { display: flex; justify-content: space-between; align-items: flex-end; }
+
+  .touch-btn {
+    pointer-events: auto;
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.12);
+    border: 2px solid rgba(255,255,255,0.25);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    color: rgba(255,255,255,0.7);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    transition: background 0.05s;
+  }
+  .touch-btn.pressed {
+    background: rgba(255,255,255,0.35);
+    border-color: rgba(0,255,0,0.6);
+  }
+
+  #dpad {
+    display: grid;
+    grid-template-columns: 60px 60px 60px;
+    grid-template-rows: 60px 60px;
+    gap: 6px;
+  }
+  #dpad .touch-btn { width: 60px; height: 60px; }
+  #btn-up    { grid-column: 2; grid-row: 1; }
+  #btn-left  { grid-column: 1; grid-row: 2; }
+  #btn-down  { grid-column: 2; grid-row: 2; }
+  #btn-right { grid-column: 3; grid-row: 2; }
+
+  #action-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+  #btn-jump {
+    width: 80px; height: 80px;
+    font-size: 16px; font-weight: bold;
+    border-radius: 50%;
+  }
+  #btn-restart {
+    width: 50px; height: 50px;
+    font-size: 12px;
+    border-radius: 50%;
+  }
+  #btn-mute {
+    width: 50px; height: 50px;
+    font-size: 18px;
+    border-radius: 50%;
+  }
+  #top-action-row {
+    display: flex; gap: 8px;
+  }
+
+  /* Tap-to-start overlay */
+  #tap-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    align-items: center; justify-content: center;
+    flex-direction: column;
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    text-align: center;
+  }
+  #tap-overlay.active { display: flex; }
+  #tap-overlay .title { font-size: 28px; color: #0f0; margin-bottom: 20px; }
+  #tap-overlay .prompt { font-size: 18px; color: #ff0; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Responsive scaling */
+  @media (max-width: 700px) {
+    #header { font-size: 14px; margin-bottom: 4px; }
+    #instructions { display: none; }
+  }
+  @media (max-height: 500px) {
+    #header { font-size: 12px; margin-bottom: 2px; }
+    #instructions { display: none; }
+  }
 </style>
 </head>
 <body>
-<div id="header">🐢 TURTLE KONG 🐢 &nbsp; Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Level: <span id="level" class="lvl">1</span></div>
+<div id="header">TURTLE KONG &nbsp; Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Level: <span id="level" class="lvl">1</span></div>
 <canvas id="game" width="640" height="480"></canvas>
 <div id="instructions">
-  <kbd>←</kbd> <kbd>→</kbd> Move &nbsp; <kbd>Space</kbd> Jump &nbsp; <kbd>↑</kbd><kbd>↓</kbd> Climb &nbsp; <kbd>R</kbd> Restart &nbsp; <kbd>M</kbd> Mute
+  <kbd>&larr;</kbd> <kbd>&rarr;</kbd> Move &nbsp; <kbd>Space</kbd> Jump &nbsp; <kbd>&uarr;</kbd><kbd>&darr;</kbd> Climb &nbsp; <kbd>R</kbd> Restart &nbsp; <kbd>M</kbd> Mute
+</div>
+
+<div id="touch-controls">
+  <div id="dpad">
+    <div id="btn-up" class="touch-btn" data-key="ArrowUp">&uarr;</div>
+    <div id="btn-left" class="touch-btn" data-key="ArrowLeft">&larr;</div>
+    <div id="btn-down" class="touch-btn" data-key="ArrowDown">&darr;</div>
+    <div id="btn-right" class="touch-btn" data-key="ArrowRight">&rarr;</div>
+  </div>
+  <div id="action-buttons">
+    <div id="btn-jump" class="touch-btn" data-key="Space">JUMP</div>
+    <div id="top-action-row">
+      <div id="btn-restart" class="touch-btn" data-key="KeyR">R</div>
+      <div id="btn-mute" class="touch-btn" data-key="KeyM">M</div>
+    </div>
+  </div>
+</div>
+
+<div id="tap-overlay">
+  <div class="title">TURTLE KONG</div>
+  <div class="prompt">Tap to Start</div>
 </div>
 
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const W = 640, H = 480;
+
+// ========================
+// DEVICE DETECTION & SCALING
+// ========================
+const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+function resizeCanvas() {
+  const header = document.getElementById('header');
+  const headerH = header.offsetHeight + 8;
+  const controlsH = isTouchDevice ? 160 : 0;
+  const availW = window.innerWidth;
+  const availH = window.innerHeight - headerH - controlsH;
+  const scaleX = availW / W;
+  const scaleY = availH / H;
+  const scale = Math.min(scaleX, scaleY, 1.5);
+  canvas.style.width = Math.floor(W * scale) + 'px';
+  canvas.style.height = Math.floor(H * scale) + 'px';
+}
+
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+resizeCanvas();
+
+// Show touch controls on touch devices
+if (isTouchDevice) {
+  document.getElementById('touch-controls').classList.add('active');
+  document.getElementById('instructions').style.display = 'none';
+}
 
 // ========================
 // SOUND ENGINE (Web Audio)
@@ -54,38 +214,50 @@ let musicPlaying = false;
 
 function initAudio() {
   if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // iOS Safari requires resume after creation
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  } catch(e) {
+    // Web Audio not supported; sounds will be silently skipped
+  }
 }
 
 function playTone(freq, duration, type = 'square', volume = 0.15, slide = 0) {
   if (!audioCtx || muted) return;
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-  if (slide) osc.frequency.linearRampToValueAtTime(freq + slide, audioCtx.currentTime + duration);
-  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + duration);
+  try {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if (slide) osc.frequency.linearRampToValueAtTime(freq + slide, audioCtx.currentTime + duration);
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch(e) {}
 }
 
 function playNoise(duration, volume = 0.1) {
   if (!audioCtx || muted) return;
-  const bufferSize = audioCtx.sampleRate * duration;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-  const src = audioCtx.createBufferSource();
-  const gain = audioCtx.createGain();
-  src.buffer = buffer;
-  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  src.connect(gain);
-  gain.connect(audioCtx.destination);
-  src.start();
+  try {
+    const bufferSize = audioCtx.sampleRate * duration;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const src = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    src.buffer = buffer;
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    src.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start();
+  } catch(e) {}
 }
 
 const SFX = {
@@ -296,18 +468,95 @@ let carrots = [];
 let particles = [];
 let bonuses = [];
 
-// Keys
+// ========================
+// INPUT HANDLING
+// ========================
 const keys = {};
 let audioStarted = false;
+
+function startAudioFromInteraction() {
+  if (!audioStarted) {
+    initAudio();
+    audioStarted = true;
+    startMusic();
+    document.getElementById('tap-overlay').classList.remove('active');
+  }
+}
+
+// Keyboard
 window.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
   if (e.code === 'KeyM') { muted = !muted; if (muted) stopMusic(); else startMusic(); }
-  if (!audioStarted) { initAudio(); audioStarted = true; startMusic(); }
+  startAudioFromInteraction();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
-canvas.addEventListener('click', () => { if (!audioStarted) { initAudio(); audioStarted = true; startMusic(); } });
+canvas.addEventListener('click', startAudioFromInteraction);
 
+// ========================
+// TOUCH CONTROLS
+// ========================
+if (isTouchDevice) {
+  // Show tap-to-start overlay on mobile for audio unlock
+  document.getElementById('tap-overlay').classList.add('active');
+
+  document.getElementById('tap-overlay').addEventListener('touchstart', e => {
+    e.preventDefault();
+    startAudioFromInteraction();
+  });
+
+  const touchButtons = document.querySelectorAll('.touch-btn');
+
+  touchButtons.forEach(btn => {
+    const key = btn.dataset.key;
+
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      startAudioFromInteraction();
+
+      if (key === 'KeyM') {
+        // Mute is a toggle, fire once on press
+        muted = !muted;
+        if (muted) stopMusic(); else startMusic();
+        btn.classList.add('pressed');
+        setTimeout(() => btn.classList.remove('pressed'), 150);
+      } else {
+        keys[key] = true;
+        btn.classList.add('pressed');
+      }
+    });
+
+    btn.addEventListener('touchend', e => {
+      e.preventDefault();
+      if (key !== 'KeyM') {
+        keys[key] = false;
+        btn.classList.remove('pressed');
+      }
+    });
+
+    btn.addEventListener('touchcancel', e => {
+      e.preventDefault();
+      if (key !== 'KeyM') {
+        keys[key] = false;
+        btn.classList.remove('pressed');
+      }
+    });
+  });
+
+  // Prevent iOS Safari bounce/zoom on the whole page
+  document.addEventListener('touchmove', e => {
+    if (e.target.closest('#touch-controls') || e.target === canvas) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+}
+
+// Prevent context menu on long press (Android)
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+// ========================
+// GAME LOGIC
+// ========================
 function getPlatformY(plat, xPos) {
   return plat.y + (xPos - plat.x) * plat.slant;
 }
